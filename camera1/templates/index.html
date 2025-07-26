@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera App</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 50px;
+        }
+        .container {
+            max-width: 800px;
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            padding-bottom: 75%; /* 4:3 Aspect Ratio */
+            margin-bottom: 20px;
+        }
+        .video-container video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+        .photo-gallery img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .folder-card {
+            cursor: pointer;
+            transition: transform 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .folder-card:hover {
+            transform: translateY(-5px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Camera App</h1>
+
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="video-container">
+                    <video id="video" autoplay></video>
+                </div>
+                <button id="snap" class="btn btn-primary btn-block">拍照</button>
+                <canvas id="canvas" style="display:none;"></canvas>
+            </div>
+            <div class="col-md-6">
+                <h3>新建文件夹</h3>
+                <div class="list-group mb-3">
+                    <div class="list-group-item list-group-item-action">
+                        <form id="newFolderForm" class="form-inline d-flex justify-content-between align-items-center">
+                            <input type="text" id="folderName" class="form-control flex-grow-1 mr-2" placeholder="文件夹名称" required>
+                            <button type="submit" class="btn btn-success">创建</button>
+                        </form>
+                    </div>
+                </div>
+                <h3>选择文件夹</h3>
+                <input type="text" id="folderSearchInput" class="form-control mb-3" placeholder="搜索文件夹...">
+                <div id="folderList" class="list-group mb-3">
+                    <!-- Folders will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <h2 class="mt-5 mb-3">照片库</h2>
+        <div id="photoGallery" class="row photo-gallery">
+            <!-- Photos will be loaded here -->
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const snap = document.getElementById('snap');
+        const photoGallery = document.getElementById('photoGallery');
+        const folderList = document.getElementById('folderList');
+        const newFolderForm = document.getElementById('newFolderForm');
+        const folderNameInput = document.getElementById('folderName');
+        const folderSearchInput = document.getElementById('folderSearchInput');
+
+        let currentFolder = '';
+        let allFolders = []; // To store all folders for filtering
+
+        // Access camera
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(err => {
+                console.error("Error accessing camera: ", err);
+                alert("无法访问摄像头，请确保已授权并重试。错误信息: " + err.name + ": " + err.message);
+            });
+
+        // Take photo
+        snap.addEventListener('click', () => {
+            if (!currentFolder) {
+                alert('请先选择或创建一个文件夹！');
+                return;
+            }
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageDataUrl = canvas.toDataURL('image/png');
+
+            fetch('/upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ image: imageDataUrl, folder: currentFolder })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('照片已保存！');
+                    loadPhotos(currentFolder);
+                } else {
+                    alert('保存失败: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('保存照片时发生错误。');
+            });
+        });
+
+        // Create new folder
+        newFolderForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = folderNameInput.value.trim();
+            if (name) {
+                fetch('/create_folder', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ folder_name: name })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('文件夹创建成功！');
+                        folderNameInput.value = '';
+                        loadFolders();
+                    } else {
+                        alert('创建失败: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('创建文件夹时发生错误。');
+                });
+            }
+        });
+
+        function loadFolders() {
+            fetch('/get_folders')
+                .then(response => response.json())
+                .then(data => {
+                    allFolders = data.folders || []; // Store all folders
+                    renderFolders(allFolders); // Render all folders initially
+                });
+        }
+
+        function renderFolders(foldersToRender) {
+            folderList.innerHTML = ''; // Clear existing folders
+            if (foldersToRender && foldersToRender.length > 0) {
+                foldersToRender.forEach(folder => {
+                    const folderDiv = document.createElement('div');
+                    folderDiv.className = 'list-group-item list-group-item-action folder-card';
+                    folderDiv.innerHTML = `
+                        <span>${folder}</span>
+                        <button class="btn btn-danger btn-sm delete-folder-btn" data-folder="${folder}">删除</button>
+                    `;
+                    folderDiv.addEventListener('click', () => selectFolder(folder));
+                            folderList.appendChild(folderDiv);
+                        });
+                        // Add event listeners for delete buttons
+                        document.querySelectorAll('.delete-folder-btn').forEach(button => {
+                            button.addEventListener('click', (e) => {
+                                e.stopPropagation(); // Prevent folder selection when clicking delete
+                                const folderToDelete = e.target.dataset.folder;
+                                if (confirm(`确定要删除文件夹 "${folderToDelete}" 吗？这将同时删除其中的所有照片。`)) {
+                                    fetch('/delete_folder', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json'
+                                        },
+                                        body: JSON.stringify({ folder_name: folderToDelete })
+                                    })
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        if (data.success) {
+                                            alert('文件夹删除成功！');
+                                            currentFolder = '';
+                                            photoGallery.innerHTML = '<p>请选择一个文件夹来查看照片。</p>';
+                                            loadFolders();
+                                        } else {
+                                            alert('删除失败: ' + data.message);
+                                        }
+                                    })
+                                    .catch(error => {
+                                        console.error('Error:', error);
+                                        alert('删除文件夹时发生错误。');
+                                    });
+                                }
+                            });
+                        });
+                    } else {
+                        folderList.innerHTML = '<p>暂无文件夹。</p>';
+                    }
+                }
+        
+        
+
+        // Filter folders based on search input
+        folderSearchInput.addEventListener('input', () => {
+            const searchTerm = folderSearchInput.value.toLowerCase();
+            const filteredFolders = allFolders.filter(folder =>
+                folder.toLowerCase().includes(searchTerm)
+            );
+            renderFolders(filteredFolders);
+        });
+
+        // Select a folder and load its photos
+        function selectFolder(folderName) {
+            currentFolder = folderName;
+            loadPhotos(folderName);
+        }
+
+        // Load photos for the selected folder
+        function loadPhotos(folderName) {
+            fetch(`/get_photos/${folderName}`)
+                .then(response => response.json())
+                .then(data => {
+                    photoGallery.innerHTML = '';
+                    if (data.photos && data.photos.length > 0) {
+                        data.photos.forEach(photo => {
+                            const colDiv = document.createElement('div');
+                            colDiv.className = 'col-md-4';
+                            colDiv.innerHTML = `
+                                <div class="card mb-4 shadow-sm">
+                                    <img src="${photo.path}" class="card-img-top" alt="${photo.name}">
+                                    <div class="card-body">
+                                        <p class="card-text">${photo.name}</p>
+                                    </div>
+                                </div>
+                            `;
+                            photoGallery.appendChild(colDiv);
+                        });
+                    } else {
+                        photoGallery.innerHTML = '<p>此文件夹中暂无照片。</p>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading photos:', error);
+                    photoGallery.innerHTML = '<p>加载照片时发生错误。</p>';
+                });
+        }
+
+        // Initial load
+        loadFolders();
+
+    </script>
+</body>
+</html>
